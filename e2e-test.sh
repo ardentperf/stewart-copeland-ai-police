@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# live-test.sh — confirms real GitHub branch permissions on an onboarded repo.
+# e2e-test.sh — confirms real GitHub branch permissions on an onboarded repo.
 #
 # Run this from an agent machine after authenticate-github.sh has been executed.
 # It tests branch-level push restrictions and commit identity enforcement:
@@ -16,8 +16,8 @@
 #     - API-created commit (bot-signed) → must succeed
 #
 # Usage:
-#   ./live-test.sh <owner/repo>
-#   ./live-test.sh <owner/repo> <agent-owner-login>
+#   ./e2e-test.sh <owner/repo>
+#   ./e2e-test.sh <owner/repo> <agent-owner-login>
 #
 # If <agent-owner-login> is omitted the script reads the allowed branch prefix
 # from the repo's "agent-gh-access-apps-blocked-from-non-ai-branches" ruleset.
@@ -32,6 +32,19 @@ fi
 
 REPO="$1"
 AGENT_OWNER="${2:-}"
+
+# ── Warning ───────────────────────────────────────────────────────────────────
+
+echo "WARNING: This script makes real GitHub API calls against ${REPO}."
+echo "It will create and delete temporary branches on the live repository."
+echo ""
+printf "Type 'yes' to continue: "
+read -r CONFIRM
+if [[ "$CONFIRM" != "yes" ]]; then
+  echo "Aborted." >&2
+  exit 1
+fi
+echo ""
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 
