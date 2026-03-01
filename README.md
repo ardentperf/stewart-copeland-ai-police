@@ -1,6 +1,6 @@
-# Agent GitHub Access
-
 [![Unit Tests](https://github.com/ardentperf/agent-github-access/actions/workflows/test.yml/badge.svg)](https://github.com/ardentperf/agent-github-access/actions/workflows/test.yml)
+
+# Agent GitHub Access
 
 Give an AI agent a distinct GitHub identity with server-side guardrails: the agent can only push to branches it owns, can never touch your personal or main branches, and its activity is unambiguously attributed in every GitHub view.
 
