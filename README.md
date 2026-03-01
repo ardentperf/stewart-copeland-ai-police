@@ -91,13 +91,14 @@ The agent must run `~/authenticate-github.sh` before doing any GitHub work, and 
 
 ## Repo access controls
 
-For each onboarded repo, `onboard-repo.sh` creates one GitHub ruleset:
+For each onboarded repo, `onboard-repo.sh` creates two GitHub rulesets:
 
 | Ruleset | Covers | Effect |
 |---|---|---|
 | `agent-blocked-from-non-agent-branches` | all branches **except** `x-ai/<owner>/**` | Agent app cannot push outside its prefix |
+| `agent-must-use-bot-identity` | branches matching `x-ai/<owner>/**` | Every commit must use the GitHub App bot email; GitHub renders these as `<owner>-agent[bot]` with the app avatar |
 
-The agent prefix is in the ruleset's `exclude` list, so no bypass is needed — the ruleset simply doesn't apply there. Human collaborators (write, maintain, admin roles) and all other installed GitHub Apps are added as bypass actors so only the agent app is restricted elsewhere.
+Human collaborators (write, maintain, admin roles) and all other installed GitHub Apps bypass both rulesets. The first ruleset excludes the agent prefix so it doesn't apply there; the second targets the agent prefix directly. Together they ensure the agent can only push to its own branches and every commit it makes is visibly attributed.
 
 ## Agent branch naming
 

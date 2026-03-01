@@ -295,9 +295,9 @@ PROTECTED_IDS=$(
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "https://api.github.com/repos/${full_name}/rulesets" \
-        | jq '[.[] | select(.name == "agent-blocked-from-non-agent-branches")] | length' \
+        | jq '[.[] | select(.name == "agent-blocked-from-non-agent-branches" or .name == "agent-must-use-bot-identity")] | length' \
         || echo "0")
-      if [[ "${count:-0}" -eq 1 ]]; then
+      if [[ "${count:-0}" -eq 2 ]]; then
         printf '%s\n' "$repo_id"
       else
         printf 'Warning: %s is missing branch protection rulesets — excluded.\n' \
@@ -336,6 +336,12 @@ chmod 600 "$CRED_FILE"
 if command -v gh &>/dev/null; then
   printf '%s' "$TOKEN" | gh auth login --hostname github.com --with-token || true
 fi
+
+# ── Configure git identity as the app bot ────────────────────────────────────
+# Commits authored with this identity are displayed as ${OWNER_LOGIN}-agent[bot]
+# in the GitHub UI and satisfy the agent-must-use-bot-identity branch ruleset.
+git config --global user.name "${OWNER_LOGIN}-agent[bot]"
+git config --global user.email "${APP_ID}+${OWNER_LOGIN}-agent[bot]@users.noreply.github.com"
 
 # ── Done ──────────────────────────────────────────────────────────────────────
 SCRIPT_PATH=$(realpath "$0" || printf '%s' "$0")
@@ -512,19 +518,21 @@ echo "Onboarding ${TARGET_REPO} for agent access..."
 echo "  Agent branch prefix: ${AGENT_BRANCH_PREFIX}/**"
 echo ""
 
-# ── Remove any existing same-named ruleset (handles app re-creation) ──────────
-_old_ruleset_id=$(gh api "/repos/${TARGET_REPO}/rulesets" \
-  --jq '.[] | select(.name == "agent-blocked-from-non-agent-branches") | .id' \
-  | head -1 || true)
-if [[ -n "$_old_ruleset_id" ]]; then
-  echo "  Replacing existing ruleset..."
-  gh api \
-    --method DELETE \
-    -H "Accept: application/vnd.github+json" \
-    -H "X-GitHub-Api-Version: 2022-11-28" \
-    "/repos/${TARGET_REPO}/rulesets/${_old_ruleset_id}" \
-    --silent
-fi
+# ── Remove any existing same-named rulesets (handles app re-creation) ─────────
+for _ruleset_name in "agent-blocked-from-non-agent-branches" "agent-must-use-bot-identity"; do
+  _old_id=$(gh api "/repos/${TARGET_REPO}/rulesets" \
+    --jq ".[] | select(.name == \"${_ruleset_name}\") | .id" \
+    | head -1 || true)
+  if [[ -n "$_old_id" ]]; then
+    echo "  Replacing existing ruleset (${_ruleset_name})..."
+    gh api \
+      --method DELETE \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "/repos/${TARGET_REPO}/rulesets/${_old_id}" \
+      --silent
+  fi
+done
 
 # ── Single ruleset: block agent app from all branches except its own prefix ────
 # The agent prefix is in the exclude list, so the ruleset simply does not apply
@@ -592,6 +600,44 @@ gh api \
 EOF
 
 echo "  ✓ Ruleset: agent blocked from all branches except ${AGENT_BRANCH_PREFIX}/**"
+
+# ── Ruleset: enforce bot identity on commits to agent branches ────────────────
+# Commits to x-ai/<owner>/** must use the GitHub App bot email address.
+# This makes every agent commit appear as <owner>-agent[bot] in the GitHub UI.
+# Human contributors (write, maintain, admin roles) and other installed apps bypass.
+gh api \
+  --method POST \
+  -H "Accept: application/vnd.github+json" \
+  -H "X-GitHub-Api-Version: 2022-11-28" \
+  "/repos/${TARGET_REPO}/rulesets" \
+  --silent \
+  --input - << EOF
+{
+  "name": "agent-must-use-bot-identity",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": ${BYPASS_ACTORS},
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/${AGENT_BRANCH_PREFIX}/**"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    {
+      "type": "commit_author_email_pattern",
+      "parameters": {
+        "operator": "ends_with",
+        "pattern": "+${OWNER_LOGIN}-agent[bot]@users.noreply.github.com",
+        "negate": false,
+        "name": "commits must use bot identity"
+      }
+    }
+  ]
+}
+EOF
+
+echo "  ✓ Ruleset: agent commits must use bot identity on ${AGENT_BRANCH_PREFIX}/**"
 
 # ── Add repo to the app installation ─────────────────────────────────────────
 # Branch protection is now in place. Only after that do we grant the app access

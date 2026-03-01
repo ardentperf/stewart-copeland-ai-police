@@ -226,7 +226,7 @@ elif [[ "\$*" == *"/access_tokens" ]]; then
 elif [[ "\$*" == *"/installation/repositories" ]]; then
   printf '{"repositories":[{"id":101,"full_name":"${TEST_OWNER}/testrepo"}]}'
 elif [[ "\$*" == */rulesets ]]; then
-  printf '[{"name":"agent-blocked-from-non-agent-branches"}]'
+  printf '[{"name":"agent-blocked-from-non-agent-branches"},{"name":"agent-must-use-bot-identity"}]'
 else
   printf '{}'
 fi
@@ -327,9 +327,10 @@ fi
 #   args with ".id"    = _old_ruleset_id    → output ID or nothing
 if [[ "\$args" == *"/repos/${TEST_OWNER}/testrepo/rulesets"* && "\$args" != *"--method POST"* ]]; then
   if [[ "${ruleset_state}" == "has-existing-ruleset" ]]; then
-    if [[ "\$args" == *"length"* ]];   then printf '1'; \
+    if [[ "\$args" == *"agent-must-use-bot-identity"* && "\$args" == *".id"* ]]; then printf '43'; \
     elif [[ "\$args" == *".id"* ]];    then printf '42'; \
-    else printf '[{"name":"agent-blocked-from-non-agent-branches","id":42}]'; fi
+    elif [[ "\$args" == *"length"* ]]; then printf '2'; \
+    else printf '[{"name":"agent-blocked-from-non-agent-branches","id":42},{"name":"agent-must-use-bot-identity","id":43}]'; fi
   else
     # no existing ruleset: length=0, .id=<empty>
     [[ "\$args" == *"length"* ]] && printf '0' || true
@@ -453,18 +454,18 @@ SHORT_EXIT=$(run_onboard_exit "$MOCK_GH_SHORT" "testrepo")
   || fail "onboard short-form: exits 0 (got $SHORT_EXIT)"
 
 SHORT_RULESETS=$(ruleset_count)
-[[ "$SHORT_RULESETS" == "1" ]] \
-  && ok  "onboard short-form: one ruleset created" \
-  || fail "onboard short-form: one ruleset created (got $SHORT_RULESETS)"
+[[ "$SHORT_RULESETS" == "2" ]] \
+  && ok  "onboard short-form: two rulesets created" \
+  || fail "onboard short-form: two rulesets created (got $SHORT_RULESETS)"
 
 [[ "$OWN_EXIT" == "0" ]] \
   && ok  "onboard own-repo: exits 0" \
   || fail "onboard own-repo: exits 0 (got $OWN_EXIT)"
 
 OWN_RULESETS=$(ruleset_count)
-[[ "$OWN_RULESETS" == "1" ]] \
-  && ok  "onboard own-repo: one ruleset created" \
-  || fail "onboard own-repo: one ruleset created (got $OWN_RULESETS)"
+[[ "$OWN_RULESETS" == "2" ]] \
+  && ok  "onboard own-repo: two rulesets created" \
+  || fail "onboard own-repo: two rulesets created (got $OWN_RULESETS)"
 
 printf '%s' "$OWN_OUTPUT" | grep -q "agent blocked from" \
   && ok  "onboard own-repo: output confirms ruleset" \
@@ -541,14 +542,14 @@ REPLACE_EXIT=$(run_onboard_exit "$MOCK_GH_REPLACE" "${TEST_OWNER}/testrepo")
   || fail "onboard replace-ruleset: exits 0 (got $REPLACE_EXIT)"
 
 REPLACE_DELETED=$(deleted_ruleset_count)
-[[ "$REPLACE_DELETED" == "1" ]] \
-  && ok  "onboard replace-ruleset: old ruleset deleted" \
-  || fail "onboard replace-ruleset: old ruleset deleted (got $REPLACE_DELETED)"
+[[ "$REPLACE_DELETED" == "2" ]] \
+  && ok  "onboard replace-ruleset: both old rulesets deleted" \
+  || fail "onboard replace-ruleset: both old rulesets deleted (got $REPLACE_DELETED)"
 
 REPLACE_CREATED=$(ruleset_count)
-[[ "$REPLACE_CREATED" == "1" ]] \
-  && ok  "onboard replace-ruleset: new ruleset created" \
-  || fail "onboard replace-ruleset: new ruleset created (got $REPLACE_CREATED)"
+[[ "$REPLACE_CREATED" == "2" ]] \
+  && ok  "onboard replace-ruleset: both new rulesets created" \
+  || fail "onboard replace-ruleset: both new rulesets created (got $REPLACE_CREATED)"
 
 printf '%s' "$REPLACE_OUTPUT" | grep -qi "replacing existing" \
   && ok  "onboard replace-ruleset: output mentions replacing" \
