@@ -260,9 +260,15 @@ printf '%s' "$SUCCESS_OUTPUT" | grep -q "x-ai/${TEST_OWNER}/" \
   && ok  "output: branch prefix contains owner login" \
   || fail "output: branch prefix contains owner login"
 
+printf '%s' "$SUCCESS_OUTPUT" | grep -q "GitHub API" \
+  && ok  "output: commit method directive mentions GitHub API" \
+  || fail "output: commit method directive mentions GitHub API"
+
+printf '%s' "$SUCCESS_OUTPUT" | grep -q "git/\.\.\." \
+  && ok  "output: commit method directive shows Git Data API path" \
+  || fail "output: commit method directive shows Git Data API path"
+
 for trigger in \
-  "Invalid username or password" \
-  "Authentication failed" \
   "Bad credentials" \
   "gh auth login"
 do
