@@ -228,7 +228,7 @@ echo "Exchanging code for credentials…"
 # Note: this endpoint is intentionally unauthenticated — the short-lived code
 # is the only credential needed. Fine-grained PATs are explicitly rejected here,
 # so we use curl with no Authorization header.
-RESULT=$(curl -sf \
+RESULT=$(curl -sSf --fail-with-body \
   -X POST \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -288,7 +288,7 @@ rm -f "$TMPKEY"
 JWT="${HEADER}.${PAYLOAD}.${SIG}"
 
 # ── Fetch installation access token ──────────────────────────────────────────
-INSTALLATIONS=$(curl -sf \
+INSTALLATIONS=$(curl -sSf --fail-with-body \
   -H "Authorization: Bearer $JWT" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -309,14 +309,14 @@ fi
 # installation, but we verify each repo has the expected rulesets and scope the
 # token to only those repos. Any repo missing the rulesets is excluded.
 
-BROAD_TOKEN=$(curl -sf -X POST \
+BROAD_TOKEN=$(curl -sSf --fail-with-body -X POST \
   -H "Authorization: Bearer $JWT" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   "https://api.github.com/app/installations/${INSTALL_ID}/access_tokens" \
   | jq -r '.token')
 
-REPOS=$(curl -sf \
+REPOS=$(curl -sSf --fail-with-body \
   -H "Authorization: Bearer $BROAD_TOKEN" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -325,7 +325,7 @@ REPOS=$(curl -sf \
 PROTECTED_IDS=$(
   printf '%s' "$REPOS" | jq -r '.repositories[] | "\(.id)\t\(.full_name)"' \
   | while IFS=$'\t' read -r repo_id full_name; do
-      count=$(curl -sf \
+      count=$(curl -sSf --fail-with-body \
         -H "Authorization: Bearer $BROAD_TOKEN" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -350,7 +350,7 @@ if [[ "$REPO_IDS_JSON" == "[]" ]]; then
   exit 1
 fi
 
-TOKEN=$(curl -sf -X POST \
+TOKEN=$(curl -sSf --fail-with-body -X POST \
   -H "Authorization: Bearer $JWT" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -440,7 +440,7 @@ while true; do
     | openssl dgst -binary -sha256 -sign "$TMPKEY" | b64url)
   rm -f "$TMPKEY"
   INSTALL_JWT="${JWT_HEADER}.${JWT_PAYLOAD}.${JWT_SIG}"
-  INSTALL_ID=$(curl -sf \
+  INSTALL_ID=$(curl -sSf --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_JWT}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
