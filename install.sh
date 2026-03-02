@@ -72,10 +72,10 @@ echo ""
 echo "  Only grant this if your repos have no sensitive Actions secrets."
 echo ""
 while true; do
-  read -r -p "Grant actions:write to the agent app? [y/n]: " ACTIONS_WRITE
+  read -r -p "Grant actions:write to the agent app? [Y/n]: " ACTIONS_WRITE
   case "$ACTIONS_WRITE" in
-    y|Y) ACTIONS_PERMISSION='"write"'; echo ""; break ;;
-    n|N) ACTIONS_PERMISSION='"read"';  echo ""; break ;;
+    y|Y|"") ACTIONS_PERMISSION='"write"'; echo ""; break ;;
+    n|N)    ACTIONS_PERMISSION='"read"';  echo ""; break ;;
     *) echo "Please answer y or n." ;;
   esac
 done
