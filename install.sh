@@ -55,6 +55,32 @@ fi
 # Not currently enabled — uncomment in the jq block below to activate:
 #   issues: "write"   create and update issue comments
 
+# ── Actions permission prompt ─────────────────────────────────────────────────
+# actions:write lets the agent trigger workflow_dispatch runs (useful for CI,
+# deployments, etc.) but carries risk: the agent also has workflows:write, so
+# it can create its own workflows and trigger them — a potential sandbox escape.
+# Triggered workflows run with GITHUB_TOKEN and can read any Actions secrets.
+# Ask the user to make an explicit choice — no default.
+echo "The agent app can be granted 'actions:write' permission, which lets it"
+echo "trigger, cancel, and re-run GitHub Actions workflows in installed repos."
+echo ""
+echo "  RISK: Because the agent also has 'workflows:write', it could write a"
+echo "  workflow and then trigger it — effectively escaping its sandbox. Any"
+echo "  triggered workflow runs with GITHUB_TOKEN and can read all Actions"
+echo "  secrets in that repo (deploy keys, cloud credentials, etc.)."
+echo ""
+echo "  Only grant this if you accept that risk and have no sensitive secrets"
+echo "  in the repos you install the app on."
+echo ""
+while true; do
+  read -r -p "Grant actions:write to the agent app? [y/n]: " ACTIONS_WRITE
+  case "$ACTIONS_WRITE" in
+    y|Y) ACTIONS_PERMISSION='"write"'; echo ""; break ;;
+    n|N) ACTIONS_PERMISSION='"read"';  echo ""; break ;;
+    *) echo "Please answer y or n." ;;
+  esac
+done
+
 # ── Onboard the fork before the app is created ───────────────────────────────
 # Sets up branch protection rulesets on the fork so they are in place the
 # moment the app is installed. Safe to re-run — onboard-repo.sh is idempotent.
@@ -70,9 +96,10 @@ PORT=$(python3 -c "import socket; s=socket.socket(); s.bind(('localhost',0)); p=
 
 # ── Manifest ─────────────────────────────────────────────────────────────────
 MANIFEST=$(jq -n \
-  --arg name "$APP_NAME" \
-  --arg url  "https://github.com/${USERNAME}" \
-  --arg cb   "http://localhost:${PORT}/callback" \
+  --arg name             "$APP_NAME" \
+  --arg url              "https://github.com/${USERNAME}" \
+  --arg cb               "http://localhost:${PORT}/callback" \
+  --argjson actions_perm "$ACTIONS_PERMISSION" \
   '{
     name:         $name,
     url:          $url,
@@ -80,13 +107,13 @@ MANIFEST=$(jq -n \
     public:       true,
     hook_attributes: { url: "https://example.com", active: false },
     default_permissions: {
-      metadata:      "read",    # required by all apps
-      contents:      "write",   # push commits; create/delete branches
-      workflows:     "write",   # modify .github/workflows/ files
-      actions:       "write",   # trigger, cancel, and re-run workflow runs; read logs
-      checks:        "read",    # read check run and check suite results
-      pull_requests: "write"    # open, update, and merge pull requests
-      # issues: "write"         # create and update issue comments
+      metadata:      "read",         # required by all apps
+      contents:      "write",        # push commits; create/delete branches
+      workflows:     "write",        # modify .github/workflows/ files
+      actions:       $actions_perm,  # trigger/cancel/re-run workflows (user choice)
+      checks:        "read",         # read check run and check suite results
+      pull_requests: "write"         # open, update, and merge pull requests
+      # issues: "write"              # create and update issue comments
     },
     default_events: ["push", "workflow_run", "check_run", "pull_request"]
   }')

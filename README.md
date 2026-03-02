@@ -180,7 +180,7 @@ The GitHub App is granted the following permissions on each installed repo:
 | Checks | read | read check run and check suite results |
 | Metadata | read | required by all GitHub Apps |
 
-> **Warning — `actions: write` scope:** With this permission the agent can trigger any `workflow_dispatch` workflow in any repo the app is installed on. Those workflows run with `GITHUB_TOKEN`, which has broad repo write access, and can read any Actions secrets defined in that repo (e.g. deployment keys, cloud credentials). This is appropriate for personal repos where you control all the workflows, but think carefully before installing the app on a repo that contains sensitive secrets or workflows you did not write. To reduce exposure, install the app only on repos you own and trust. You can restrict it further by editing `install.sh` and changing `actions` to `"read"` before running setup — you will lose the ability to have the agent trigger workflows, but all other functionality is unaffected.
+> **Warning — `actions: write` scope:** Because the agent also has `workflows: write`, granting `actions: write` means the agent can write its own workflow and then trigger it — effectively escaping its sandbox. Any triggered workflow runs with `GITHUB_TOKEN` and can read all Actions secrets in that repo (deploy keys, cloud credentials, etc.). Only enable this if you accept that risk and have no sensitive secrets in the repos you install the app on. `install.sh` will ask you to make an explicit choice at setup time; you can also change it later by editing `install.sh` and re-running setup.
 
 ## Agent branch naming
 
