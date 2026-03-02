@@ -77,7 +77,7 @@ MANIFEST=$(jq -n \
     name:         $name,
     url:          $url,
     redirect_url: $cb,
-    public:       false,
+    public:       true,
     hook_attributes: { url: "https://example.com", active: false },
     default_permissions: {
       metadata:      "read",    # required by all apps
