@@ -14,6 +14,10 @@
 #     - wrong committer email           → must be blocked
 #     - API-created commit (bot-signed) → must succeed
 #
+#   Pull request permissions:
+#     - create PR from agent branch     → must succeed
+#     - merge PR into non-agent branch  → must be blocked
+#
 # Credentials (in priority order):
 #   1. GH_APP_ID + GH_APP_PEM_B64 env vars (set by CI from Actions secrets)
 #   2. ~/authenticate-github.sh (extracts embedded APP_ID and APP_PEM_B64)
@@ -158,6 +162,7 @@ OTHER_BRANCH="e2e-test-no-prefix-${TS}"
 WRONG_PREFIX="x-ai/not-${AGENT_OWNER}/e2e-test-${TS}"
 
 PUSHED_AGENT_BRANCH=""
+CREATED_PR_NUMBER=""
 
 try_push() {
   local target="$1"
@@ -274,12 +279,65 @@ else
   || fail "API-created (bot-signed) commit push failed: $(cat "$WORKDIR/ref.err")"
 fi
 
-# ── Cleanup: delete the test branch ───────────────────────────────────────────
+# ── Test: agent creates a PR from agent branch → must succeed ─────────────────
+
+if [[ -n "$PUSHED_AGENT_BRANCH" ]]; then
+  PR_RESPONSE=$(gh api "/repos/${REPO}/pulls" \
+    --method POST \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    --field "title=e2e-test: PR creation check (${TS})" \
+    --field "head=${PUSHED_AGENT_BRANCH}" \
+    --field "base=${DEFAULT_BRANCH}" \
+    --field "body=Automated e2e test — safe to close." \
+    2>"$WORKDIR/pr-create.err") && PR_CREATE_OK=true || PR_CREATE_OK=false
+
+  if [[ "$PR_CREATE_OK" == "true" ]]; then
+    CREATED_PR_NUMBER=$(printf '%s' "$PR_RESPONSE" | jq -r '.number')
+    ok  "agent created PR from agent branch (PR #${CREATED_PR_NUMBER})"
+  else
+    fail "agent could not create PR from agent branch: $(cat "$WORKDIR/pr-create.err")"
+  fi
+else
+  echo "SKIP  agent PR creation (no agent branch was pushed)"
+fi
+
+# ── Test: agent merges PR into non-agent branch → must be blocked ─────────────
+# Merging a PR into main triggers a push to main, which the
+# agent-gh-access-apps-blocked-from-non-ai-branches ruleset must block.
+
+if [[ -n "$CREATED_PR_NUMBER" ]]; then
+  gh api "/repos/${REPO}/pulls/${CREATED_PR_NUMBER}/merge" \
+    --method PUT \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    --field "merge_method=squash" \
+    --silent 2>"$WORKDIR/pr-merge.err" \
+  && MERGE_BLOCKED=false || MERGE_BLOCKED=true
+
+  if [[ "$MERGE_BLOCKED" == "true" ]]; then
+    ok  "agent merge into ${DEFAULT_BRANCH} blocked by ruleset"
+  else
+    fail "agent merge into ${DEFAULT_BRANCH} was NOT blocked  ← security issue"
+  fi
+else
+  echo "SKIP  agent PR merge check (no PR was created)"
+fi
+
+# ── Cleanup: close PR and delete the test branch ──────────────────────────────
+
+if [[ -n "$CREATED_PR_NUMBER" ]]; then
+  gh api "/repos/${REPO}/pulls/${CREATED_PR_NUMBER}" \
+    --method PATCH \
+    --field "state=closed" \
+    --silent 2>/dev/null \
+  && echo "" && echo "Cleaned up: closed PR #${CREATED_PR_NUMBER}" \
+  || echo "Warning: could not close PR #${CREATED_PR_NUMBER} — close it manually." >&2
+fi
 
 if [[ -n "$PUSHED_AGENT_BRANCH" ]]; then
   if gh api "/repos/${REPO}/git/refs/heads/${PUSHED_AGENT_BRANCH}" \
        --method DELETE --silent 2>/dev/null; then
-    echo ""
     echo "Cleaned up: deleted ${PUSHED_AGENT_BRANCH}"
   else
     echo ""
