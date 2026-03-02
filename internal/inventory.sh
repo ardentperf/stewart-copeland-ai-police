@@ -30,7 +30,7 @@ rm -f "$TMPKEY"
 JWT="${HEADER}.${PAYLOAD}.${SIG}"
 
 # ── Get installation ID and token ─────────────────────────────────────────────
-INSTALL_ID=$(curl -sSf --fail-with-body \
+INSTALL_ID=$(curl -sS --fail-with-body \
   -H "Authorization: Bearer ${JWT}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -42,7 +42,7 @@ if [[ -z "$INSTALL_ID" ]]; then
   exit 1
 fi
 
-INSTALL_TOKEN=$(curl -sSf --fail-with-body -X POST \
+INSTALL_TOKEN=$(curl -sS --fail-with-body -X POST \
   -H "Authorization: Bearer ${JWT}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -55,7 +55,7 @@ if [[ -z "$INSTALL_TOKEN" || "$INSTALL_TOKEN" == "null" ]]; then
 fi
 
 # ── Check each installed repo for expected rulesets ───────────────────────────
-REPOS=$(curl -sSf --fail-with-body \
+REPOS=$(curl -sS --fail-with-body \
   -H "Authorization: Bearer ${INSTALL_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -64,7 +64,7 @@ REPOS=$(curl -sSf --fail-with-body \
 
 FAIL=0
 while IFS= read -r repo; do
-  COUNT=$(curl -sSf --fail-with-body \
+  COUNT=$(curl -sS --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -99,7 +99,7 @@ echo "All installed repos have required branch protection rulesets."
 # the file is reset so the inventory reflects only the current app.
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   echo "Updating inventory branch..."
-  OWNER_LOGIN=$(curl -sSf --fail-with-body \
+  OWNER_LOGIN=$(curl -sS --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -111,7 +111,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 
   # Fetch current inventory from branch if it exists
   echo "Fetching current inventory..."
-  CURRENT_INV=$(curl -sSf --fail-with-body \
+  CURRENT_INV=$(curl -sS --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -139,7 +139,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     # Upload blob
     echo "Uploading blob..."
     BLOB_CONTENT=$(printf '%s' "$NEW_INV" | base64 | tr -d '\n')
-    BLOB_SHA=$(curl -sSf --fail-with-body -X POST \
+    BLOB_SHA=$(curl -sS --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -156,7 +156,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     # Get parent commit and base tree
     # On init: orphan from main with no base_tree so only onboarded-repos.txt is present.
     # On update: build on the inventory branch's own HEAD to avoid inheriting main's files.
-    MAIN_SHA=$(curl -sSf --fail-with-body \
+    MAIN_SHA=$(curl -sS --fail-with-body \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -168,7 +168,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       TREE_PAYLOAD="{\"tree\":[{\"path\":\"onboarded-repos.txt\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"${BLOB_SHA}\"}]}"
     else
       ENCODED_BRANCH=$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
-      PARENT_SHA=$(curl -sSf --fail-with-body \
+      PARENT_SHA=$(curl -sS --fail-with-body \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -178,7 +178,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         echo "Error: failed to fetch inventory branch ref (got empty/null sha)." >&2
         exit 1
       fi
-      BASE_TREE=$(curl -sSf --fail-with-body \
+      BASE_TREE=$(curl -sS --fail-with-body \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -189,7 +189,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 
     # Create tree and commit
     echo "Creating commit..."
-    NEW_TREE=$(curl -sSf --fail-with-body -X POST \
+    NEW_TREE=$(curl -sS --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -203,7 +203,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       exit 1
     fi
 
-    NEW_COMMIT=$(curl -sSf --fail-with-body -X POST \
+    NEW_COMMIT=$(curl -sS --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -220,7 +220,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     # Create or force-update the inventory branch
     echo "Updating branch ref..."
     ENCODED_BRANCH=$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
-    BRANCH_EXISTS=$(curl -sSf --fail-with-body \
+    BRANCH_EXISTS=$(curl -sS --fail-with-body \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -228,7 +228,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       | jq -r '.ref // empty' || true)
 
     if [[ -n "$BRANCH_EXISTS" ]]; then
-      curl -sSf --fail-with-body -X PATCH \
+      curl -sS --fail-with-body -X PATCH \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -236,7 +236,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
         -d "{\"sha\":\"${NEW_COMMIT}\",\"force\":true}" \
         "https://api.github.com/repos/${FORK_REPO}/git/refs/heads/${ENCODED_BRANCH}"
     else
-      curl -sSf --fail-with-body -X POST \
+      curl -sS --fail-with-body -X POST \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
