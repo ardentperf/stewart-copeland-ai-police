@@ -122,6 +122,8 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/repos/${FORK_REPO}/contents/onboarded-repos.txt?ref=${INV_BRANCH}" \
     | jq -r '.content' | base64 -d || true)
+  # Normalize: ensure CURRENT_INV ends with a newline (base64 -d strips it)
+  [[ -n "$CURRENT_INV" && "${CURRENT_INV: -1}" != $'\n' ]] && CURRENT_INV="${CURRENT_INV}"$'\n'
 
   # Reset if app ID changed or branch doesn't exist yet
   if [[ -z "$CURRENT_INV" ]] || [[ "$(printf '%s' "$CURRENT_INV" | head -1)" != "$HEADER_LINE" ]]; then
