@@ -83,7 +83,7 @@ MANIFEST=$(jq -n \
       metadata:      "read",    # required by all apps
       contents:      "write",   # push commits; create/delete branches
       workflows:     "write",   # modify .github/workflows/ files
-      actions:       "read",    # read workflow run logs and results
+      actions:       "write",   # trigger, cancel, and re-run workflow runs; read logs
       checks:        "read",    # read check run and check suite results
       pull_requests: "write"    # open, update, and merge pull requests
       # issues: "write"         # create and update issue comments

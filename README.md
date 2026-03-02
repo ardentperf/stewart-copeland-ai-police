@@ -167,6 +167,21 @@ Human collaborators (write, maintain, admin roles) bypass both rulesets. The fir
 
 The signature requirement enforces bot identity without needing a separate email-pattern rule. GitHub's verification logic requires that the committer email in the commit matches a verified email on the account that owns the signing key. The bot's noreply address (`APP_ID+owner-agent[bot]@users.noreply.github.com`) is only associated with the GitHub App bot account — no human can register it — so a commit carrying that email can only pass verification if GitHub signed it on behalf of the app. `authenticate-github.sh` configures git to use this email, so agent commits are rendered as `<owner>-agent[bot]` with the app avatar in the GitHub UI.
 
+## App permissions
+
+The GitHub App is granted the following permissions on each installed repo:
+
+| Permission | Level | Why |
+|---|---|---|
+| Contents | read/write | push commits, create/delete branches |
+| Pull requests | read/write | open, update, and merge PRs |
+| Workflows | read/write | modify `.github/workflows/` files |
+| Actions | **read/write** | trigger, cancel, and re-run workflow runs |
+| Checks | read | read check run and check suite results |
+| Metadata | read | required by all GitHub Apps |
+
+> **Warning — `actions: write` scope:** With this permission the agent can trigger any `workflow_dispatch` workflow in any repo the app is installed on. Those workflows run with `GITHUB_TOKEN`, which has broad repo write access, and can read any Actions secrets defined in that repo (e.g. deployment keys, cloud credentials). This is appropriate for personal repos where you control all the workflows, but think carefully before installing the app on a repo that contains sensitive secrets or workflows you did not write. To reduce exposure, install the app only on repos you own and trust. You can restrict it further by editing `install.sh` and changing `actions` to `"read"` before running setup — you will lose the ability to have the agent trigger workflows, but all other functionality is unaffected.
+
 ## Agent branch naming
 
 All agent branches must follow this pattern:
