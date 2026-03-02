@@ -30,7 +30,7 @@ rm -f "$TMPKEY"
 JWT="${HEADER}.${PAYLOAD}.${SIG}"
 
 # ── Get installation ID and token ─────────────────────────────────────────────
-INSTALL_ID=$(curl -sf \
+INSTALL_ID=$(curl -sSf --fail-with-body \
   -H "Authorization: Bearer ${JWT}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -42,15 +42,20 @@ if [[ -z "$INSTALL_ID" ]]; then
   exit 1
 fi
 
-INSTALL_TOKEN=$(curl -sf -X POST \
+INSTALL_TOKEN=$(curl -sSf --fail-with-body -X POST \
   -H "Authorization: Bearer ${JWT}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
   "https://api.github.com/app/installations/${INSTALL_ID}/access_tokens" \
   | jq -r '.token')
 
+if [[ -z "$INSTALL_TOKEN" || "$INSTALL_TOKEN" == "null" ]]; then
+  echo "Error: failed to obtain installation token." >&2
+  exit 1
+fi
+
 # ── Check each installed repo for expected rulesets ───────────────────────────
-REPOS=$(curl -sf \
+REPOS=$(curl -sSf --fail-with-body \
   -H "Authorization: Bearer ${INSTALL_TOKEN}" \
   -H "Accept: application/vnd.github+json" \
   -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -59,7 +64,7 @@ REPOS=$(curl -sf \
 
 FAIL=0
 while IFS= read -r repo; do
-  COUNT=$(curl -sf \
+  COUNT=$(curl -sSf --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -93,7 +98,8 @@ echo "All installed repos have required branch protection rulesets."
 # First line is a comment with the app ID — if it changes (app recreated),
 # the file is reset so the inventory reflects only the current app.
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  OWNER_LOGIN=$(curl -sf \
+  echo "Updating inventory branch..."
+  OWNER_LOGIN=$(curl -sSf --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -104,12 +110,13 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   HEADER_LINE="# app-id:${GH_APP_ID}"
 
   # Fetch current inventory from branch if it exists
-  CURRENT_INV=$(curl -sf \
+  echo "Fetching current inventory..."
+  CURRENT_INV=$(curl -sSf --fail-with-body \
     -H "Authorization: Bearer ${INSTALL_TOKEN}" \
     -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" \
     "https://api.github.com/repos/${FORK_REPO}/contents/onboarded-repos.txt?ref=${INV_BRANCH}" \
-    | jq -r '.content' | base64 -d 2>/dev/null || true)
+    | jq -r '.content' | base64 -d || true)
 
   # Reset if app ID changed or branch doesn't exist yet
   if [[ -z "$CURRENT_INV" ]] || [[ "$(printf '%s' "$CURRENT_INV" | head -1)" != "$HEADER_LINE" ]]; then
@@ -130,8 +137,9 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
   # Only update if content changed
   if [[ "$NEW_INV" != "$CURRENT_INV" ]]; then
     # Upload blob
+    echo "Uploading blob..."
     BLOB_CONTENT=$(printf '%s' "$NEW_INV" | base64 | tr -d '\n')
-    BLOB_SHA=$(curl -sf -X POST \
+    BLOB_SHA=$(curl -sSf --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -140,10 +148,15 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       "https://api.github.com/repos/${FORK_REPO}/git/blobs" \
       | jq -r '.sha')
 
+    if [[ -z "$BLOB_SHA" || "$BLOB_SHA" == "null" ]]; then
+      echo "Error: failed to upload blob (got empty/null sha)." >&2
+      exit 1
+    fi
+
     # Get parent commit and base tree
     # On init: orphan from main with no base_tree so only onboarded-repos.txt is present.
     # On update: build on the inventory branch's own HEAD to avoid inheriting main's files.
-    MAIN_SHA=$(curl -sf \
+    MAIN_SHA=$(curl -sSf --fail-with-body \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -155,13 +168,17 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       TREE_PAYLOAD="{\"tree\":[{\"path\":\"onboarded-repos.txt\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"${BLOB_SHA}\"}]}"
     else
       ENCODED_BRANCH=$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
-      PARENT_SHA=$(curl -sf \
+      PARENT_SHA=$(curl -sSf --fail-with-body \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         "https://api.github.com/repos/${FORK_REPO}/git/ref/heads/${ENCODED_BRANCH}" \
         | jq -r '.object.sha')
-      BASE_TREE=$(curl -sf \
+      if [[ -z "$PARENT_SHA" || "$PARENT_SHA" == "null" ]]; then
+        echo "Error: failed to fetch inventory branch ref (got empty/null sha)." >&2
+        exit 1
+      fi
+      BASE_TREE=$(curl -sSf --fail-with-body \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -171,7 +188,8 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     fi
 
     # Create tree and commit
-    NEW_TREE=$(curl -sf -X POST \
+    echo "Creating commit..."
+    NEW_TREE=$(curl -sSf --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -180,7 +198,12 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       "https://api.github.com/repos/${FORK_REPO}/git/trees" \
       | jq -r '.sha')
 
-    NEW_COMMIT=$(curl -sf -X POST \
+    if [[ -z "$NEW_TREE" || "$NEW_TREE" == "null" ]]; then
+      echo "Error: failed to create git tree (got empty/null sha)." >&2
+      exit 1
+    fi
+
+    NEW_COMMIT=$(curl -sSf --fail-with-body -X POST \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -189,9 +212,15 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       "https://api.github.com/repos/${FORK_REPO}/git/commits" \
       | jq -r '.sha')
 
+    if [[ -z "$NEW_COMMIT" || "$NEW_COMMIT" == "null" ]]; then
+      echo "Error: failed to create git commit (got empty/null sha)." >&2
+      exit 1
+    fi
+
     # Create or force-update the inventory branch
+    echo "Updating branch ref..."
     ENCODED_BRANCH=$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
-    BRANCH_EXISTS=$(curl -sf \
+    BRANCH_EXISTS=$(curl -sSf --fail-with-body \
       -H "Authorization: Bearer ${INSTALL_TOKEN}" \
       -H "Accept: application/vnd.github+json" \
       -H "X-GitHub-Api-Version: 2022-11-28" \
@@ -199,21 +228,21 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
       | jq -r '.ref // empty' || true)
 
     if [[ -n "$BRANCH_EXISTS" ]]; then
-      curl -sf -X PATCH \
+      curl -sSf --fail-with-body -X PATCH \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -H "Content-Type: application/json" \
         -d "{\"sha\":\"${NEW_COMMIT}\",\"force\":true}" \
-        "https://api.github.com/repos/${FORK_REPO}/git/refs/heads/${ENCODED_BRANCH}" > /dev/null
+        "https://api.github.com/repos/${FORK_REPO}/git/refs/heads/${ENCODED_BRANCH}"
     else
-      curl -sf -X POST \
+      curl -sSf --fail-with-body -X POST \
         -H "Authorization: Bearer ${INSTALL_TOKEN}" \
         -H "Accept: application/vnd.github+json" \
         -H "X-GitHub-Api-Version: 2022-11-28" \
         -H "Content-Type: application/json" \
         -d "{\"ref\":\"refs/heads/${INV_BRANCH}\",\"sha\":\"${NEW_COMMIT}\"}" \
-        "https://api.github.com/repos/${FORK_REPO}/git/refs" > /dev/null
+        "https://api.github.com/repos/${FORK_REPO}/git/refs"
     fi
 
     echo "Inventory updated on branch ${INV_BRANCH}."
