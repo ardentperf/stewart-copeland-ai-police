@@ -657,96 +657,142 @@ printf '%s' "$ONEFAIL_OUTPUT" | grep -q "onboard-repo.sh" \
 # inventory.sh inventory tests (GITHUB_TOKEN path)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-# Set up a minimal git repo so inventory.sh can commit inventory updates.
-INV_REPO="$TMPDIR_T/inv-repo"
-mkdir -p "$INV_REPO"
-git -C "$INV_REPO" init -q
-git -C "$INV_REPO" config user.email "test@test"
-git -C "$INV_REPO" config user.name  "test"
-# Seed with an initial commit so HEAD exists
-touch "$INV_REPO/.keep"
-git -C "$INV_REPO" add .keep
-git -C "$INV_REPO" commit -q -m "init"
+# The inventory update now uses the GitHub API to push to an agent branch.
+# We mock curl to intercept all API calls and capture the blob content uploaded.
 
-# Mock git that delegates to real git but suppresses push
-REAL_GIT=$(command -v git)
-INVENTORY_GIT_BIN="$TMPDIR_T/inventory-git-bin"
-mkdir -p "$INVENTORY_GIT_BIN"
-cat > "$INVENTORY_GIT_BIN/git" << GITEOF
-#!/usr/bin/env bash
-if [[ "\$1" == "push" ]]; then exit 0; fi
-exec "${REAL_GIT}" "\$@"
-GITEOF
-chmod +x "$INVENTORY_GIT_BIN/git"
+INV_BLOB_LOG="$TMPDIR_T/inv-blob.log"
 
-# curl mock returning two repos, both protected
-INVENTORY_CURL="$TMPDIR_T/inventory-inv-curl"
-cat > "$INVENTORY_CURL" << MOCKEOF
+# Helper: build a curl mock for inventory tests.
+# $1 = path to write mock, $2 = existing inventory content to return (empty = 404)
+write_inv_curl() {
+  local mock_path="$1" existing_inv="$2"
+  local existing_b64=""
+  if [[ -n "$existing_inv" ]]; then
+    existing_b64=$(printf '%s' "$existing_inv" | base64 | tr -d '\n')
+  fi
+  cat > "$mock_path" << MOCKEOF
 #!/usr/bin/env bash
-if [[ "\$*" == *"/app/installations"* && "\$*" != *"access_tokens"* ]]; then
+args="\$*"
+if [[ "\$args" == *"/app/installations"* && "\$args" != *"access_tokens"* ]]; then
   printf '[{"id":42}]'
-elif [[ "\$*" == *"access_tokens"* ]]; then
+elif [[ "\$args" == *"access_tokens"* ]]; then
   printf '{"token":"ghs_mock"}'
-elif [[ "\$*" == *"/installation/repositories"* ]]; then
-  printf '{"repositories":[{"full_name":"${TEST_OWNER}/repo1"},{"full_name":"${TEST_OWNER}/repo2"}]}'
-elif [[ "\$*" == *"/rulesets"* ]]; then
+elif [[ "\$args" == *"/installation/repositories"* ]]; then
+  printf '{"repositories":[{"full_name":"${TEST_OWNER}/repo1","owner":{"login":"${TEST_OWNER}"}},{"full_name":"${TEST_OWNER}/repo2","owner":{"login":"${TEST_OWNER}"}}]}'
+elif [[ "\$args" == *"/rulesets"* ]]; then
   printf '[{"name":"agent-gh-access-apps-blocked-from-non-ai-branches"},{"name":"agent-gh-access-apps-must-sign"}]'
+elif [[ "\$args" == *"inventory---internal-do-not-delete"* && "\$args" == *"contents"* ]]; then
+  if [[ -n "${existing_b64}" ]]; then
+    printf '{"content":"${existing_b64}"}'
+  else
+    exit 1
+  fi
+elif [[ "\$args" == *"/git/blobs"* ]]; then
+  # Capture the blob content from -d arg for inspection
+  for i in "\$@"; do
+    if [[ "\$i" == *"content"* ]]; then
+      printf '%s' "\$i" >> "${INV_BLOB_LOG}"
+      printf '\n' >> "${INV_BLOB_LOG}"
+    fi
+  done
+  printf '{"sha":"mockblobsha"}'
+elif [[ "\$args" == *"/git/ref/heads/main"* ]]; then
+  printf '{"object":{"sha":"mainsha"}}'
+elif [[ "\$args" == *"/git/commits/mainsha"* || "\$args" == *"/git/commits/mainsha"* ]]; then
+  printf '{"tree":{"sha":"maintreesha"}}'
+elif [[ "\$args" == *"/git/trees"* ]]; then
+  printf '{"sha":"newtreesha"}'
+elif [[ "\$args" == *"/git/commits"* ]]; then
+  printf '{"sha":"newcommitsha"}'
+elif [[ "\$args" == *"/git/ref/heads/"*"inventory"* ]]; then
+  # Branch existence check — return empty to simulate not existing on first run
+  if [[ -f "${INV_BLOB_LOG}" ]]; then
+    printf '{"ref":"refs/heads/x-ai/${TEST_OWNER}/inventory---internal-do-not-delete"}'
+  else
+    exit 1
+  fi
+elif [[ "\$args" == *"/git/refs"* ]]; then
+  printf '{"ref":"refs/heads/x-ai/${TEST_OWNER}/inventory---internal-do-not-delete"}'
 fi
 MOCKEOF
-chmod +x "$INVENTORY_CURL"
+  chmod +x "$mock_path"
+}
 
-# Run inventory twice with GITHUB_TOKEN set to test cumulative behaviour
-cp "$INVENTORY_CURL" "$TMPDIR_T/inventory-bin/curl"
-for _run in 1 2; do
-  (cd "$INV_REPO" && \
-    GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
-    PATH="$INVENTORY_GIT_BIN:$TMPDIR_T/inventory-bin:$PATH" \
-    bash "$TEST_INVENTORY" > /dev/null 2>&1 || true)
-done
+# Helper: extract decoded inventory from blob log (last upload)
+get_inv_content() {
+  [[ -f "$INV_BLOB_LOG" ]] || { echo ""; return; }
+  # Extract base64 content from JSON -d arg and decode
+  grep -o '"content":"[^"]*"' "$INV_BLOB_LOG" | tail -1 | cut -d'"' -f4 | base64 -d 2>/dev/null || true
+}
 
-INV_FILE="$INV_REPO/onboarded-repos.txt"
+# ── Run 1: no existing inventory ──────────────────────────────────────────────
+rm -f "$INV_BLOB_LOG"
+INV_CURL1="$TMPDIR_T/inv-curl-run1"
+write_inv_curl "$INV_CURL1" ""
+cp "$INV_CURL1" "$TMPDIR_T/inventory-bin/curl"
 
-[[ -f "$INV_FILE" ]] \
-  && ok  "inventory inventory: onboarded-repos.txt created" \
-  || fail "inventory inventory: onboarded-repos.txt created"
+GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
+  PATH="$TMPDIR_T/inventory-bin:$PATH" \
+  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
 
-head -1 "$INV_FILE" | grep -q "^# app-id:${TEST_APP_ID}$" \
+INV_CONTENT1=$(get_inv_content)
+
+printf '%s' "$INV_CONTENT1" | grep -q "^# app-id:${TEST_APP_ID}$" \
   && ok  "inventory inventory: first line is app-id comment" \
   || fail "inventory inventory: first line is app-id comment"
 
-grep -qx "${TEST_OWNER}/repo1" "$INV_FILE" \
+printf '%s' "$INV_CONTENT1" | grep -qx "${TEST_OWNER}/repo1" \
   && ok  "inventory inventory: repo1 present" \
   || fail "inventory inventory: repo1 present"
 
-grep -qx "${TEST_OWNER}/repo2" "$INV_FILE" \
+printf '%s' "$INV_CONTENT1" | grep -qx "${TEST_OWNER}/repo2" \
   && ok  "inventory inventory: repo2 present" \
   || fail "inventory inventory: repo2 present"
 
-# Verify no duplicates after two runs
-REPO1_COUNT=$(grep -cx "${TEST_OWNER}/repo1" "$INV_FILE" || true)
+# ── Run 2: existing inventory returned — no duplicates ────────────────────────
+rm -f "$INV_BLOB_LOG"
+INV_CURL2="$TMPDIR_T/inv-curl-run2"
+write_inv_curl "$INV_CURL2" "$INV_CONTENT1"
+cp "$INV_CURL2" "$TMPDIR_T/inventory-bin/curl"
+
+GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
+  PATH="$TMPDIR_T/inventory-bin:$PATH" \
+  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
+
+# If content unchanged no blob is uploaded; check log is empty or content has no dupes
+if [[ -f "$INV_BLOB_LOG" ]]; then
+  INV_CONTENT2=$(get_inv_content)
+  REPO1_COUNT=$(printf '%s' "$INV_CONTENT2" | grep -cx "${TEST_OWNER}/repo1" || true)
+else
+  # No upload means unchanged — no duplicates by definition
+  REPO1_COUNT=1
+fi
 [[ "$REPO1_COUNT" == "1" ]] \
   && ok  "inventory inventory: no duplicate entries after two runs" \
   || fail "inventory inventory: no duplicate entries after two runs (count=$REPO1_COUNT)"
 
-# ── inventory: app-id change resets file ───────────────────────────────
-
+# ── Run 3: app-id change resets inventory ─────────────────────────────────────
+rm -f "$INV_BLOB_LOG"
 NEW_APP_ID="111222"
-cp "$INVENTORY_CURL" "$TMPDIR_T/inventory-bin/curl"
-(cd "$INV_REPO" && \
-  GH_APP_ID="$NEW_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
-  PATH="$INVENTORY_GIT_BIN:$TMPDIR_T/inventory-bin:$PATH" \
-  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true)
+INV_CURL3="$TMPDIR_T/inv-curl-run3"
+write_inv_curl "$INV_CURL3" "$INV_CONTENT1"
+cp "$INV_CURL3" "$TMPDIR_T/inventory-bin/curl"
 
-head -1 "$INV_FILE" | grep -q "^# app-id:${NEW_APP_ID}$" \
+GH_APP_ID="$NEW_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
+  PATH="$TMPDIR_T/inventory-bin:$PATH" \
+  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
+
+INV_CONTENT3=$(get_inv_content)
+
+printf '%s' "$INV_CONTENT3" | grep -q "^# app-id:${NEW_APP_ID}$" \
   && ok  "inventory inventory: app-id change resets header" \
   || fail "inventory inventory: app-id change resets header"
 
-grep -qx "${TEST_OWNER}/repo1" "$INV_FILE" \
+printf '%s' "$INV_CONTENT3" | grep -qx "${TEST_OWNER}/repo1" \
   && ok  "inventory inventory: repos repopulated after reset" \
   || fail "inventory inventory: repos repopulated after reset"
 
-# Old app-id must not appear anywhere in the file
-grep -q "app-id:${TEST_APP_ID}" "$INV_FILE" \
+printf '%s' "$INV_CONTENT3" | grep -q "app-id:${TEST_APP_ID}" \
   && fail "inventory inventory: old app-id still present after reset" \
   || ok  "inventory inventory: old app-id gone after reset"
 
@@ -760,10 +806,11 @@ bash -n "$TEST_CLEANUP" 2>/dev/null \
   && ok  "syntax: uninstall.sh" \
   || fail "syntax: uninstall.sh"
 
-# Shared mock gh for cleanup tests: handles user login, secret existence/deletion,
-# ruleset listing/deletion. $1 controls secret existence ("has-secrets"|"no-secrets").
+# Shared mock gh for cleanup tests: handles user login, inventory fetch from branch,
+# secret existence/deletion, ruleset listing/deletion.
+# $2 = "has-inventory"|"no-inventory" controls whether inventory branch fetch succeeds
 write_cleanup_mock_gh() {
-  local mock_path="$1" secret_state="${2:-has-secrets}"
+  local mock_path="$1" inv_state="${2:-has-inventory}"
   cat > "$mock_path" << GHEOF
 #!/usr/bin/env bash
 args="\$*"
@@ -771,17 +818,20 @@ if [[ "\$args" == *"user"* && "\$args" == *".login"* ]]; then
   printf '%s' "${TEST_OWNER}"
   exit 0
 fi
-if [[ "\$args" == *"contents/onboarded-repos.txt"* ]]; then
-  # Return base64-encoded inventory content
-  CONTENT=\$(printf '# app-id:%s\n%s/repo1\n%s/repo2\n' "${TEST_APP_ID}" "${TEST_OWNER}" "${TEST_OWNER}" | base64 | tr -d '\n')
-  printf '{"content":"%s"}' "\$CONTENT"
-  exit 0
+if [[ "\$args" == *"contents/onboarded-repos.txt"* && "\$args" == *"inventory---internal-do-not-delete"* ]]; then
+  if [[ "${inv_state}" == "has-inventory" ]]; then
+    # uninstall.sh uses --jq '.content', so output just the base64 content directly
+    printf '# app-id:%s\n%s/repo1\n%s/repo2\n' "${TEST_APP_ID}" "${TEST_OWNER}" "${TEST_OWNER}" | base64 | tr -d '\n'
+    exit 0
+  else
+    exit 1
+  fi
 fi
 if [[ "\$args" == *"secrets/GH_APP_ID"* && "\$args" != *"DELETE"* ]]; then
-  [[ "${secret_state}" == "has-secrets" ]] && exit 0 || exit 1
+  exit 0
 fi
 if [[ "\$args" == *"secrets/GH_APP_PEM"* && "\$args" != *"DELETE"* ]]; then
-  [[ "${secret_state}" == "has-secrets" ]] && exit 0 || exit 1
+  exit 0
 fi
 if [[ "\$args" == *"--method DELETE"* && "\$args" == *"secrets"* ]]; then
   echo "secret-deleted" >> "${TMPDIR_T}/cleanup-secrets.log"
@@ -800,20 +850,8 @@ GHEOF
   chmod +x "$mock_path"
 }
 
-# Write a valid inventory file for cleanup tests
-CLEANUP_INVENTORY="$TMPDIR_T/cleanup-inventory.txt"
-printf '# app-id:%s\n%s/repo1\n%s/repo2\n' \
-  "$TEST_APP_ID" "$TEST_OWNER" "$TEST_OWNER" > "$CLEANUP_INVENTORY"
-
 # curl mock: app is gone (404)
 CLEANUP_CURL_GONE="$TMPDIR_T/cleanup-curl-gone"
-cat > "$CLEANUP_CURL_GONE" << 'EOF'
-#!/usr/bin/env bash
-# Return 404 for app existence check
-printf '' ; exit 0
-# (curl -w "%{http_code}" prints the code; simulate by writing to stdout)
-EOF
-# Use a proper curl mock that outputs 404 as the http_code
 cat > "$CLEANUP_CURL_GONE" << 'EOF'
 #!/usr/bin/env bash
 if [[ "$*" == *"-w"* && "$*" == *"%{http_code}"* ]]; then
@@ -823,7 +861,7 @@ EOF
 chmod +x "$CLEANUP_CURL_GONE"
 
 run_cleanup() {
-  local gh_mock="$1" curl_mock="$2" inventory="$3"
+  local gh_mock="$1" curl_mock="$2"
   rm -f "$TMPDIR_T/cleanup-secrets.log" "$TMPDIR_T/cleanup-rulesets.log"
   local bin="$TMPDIR_T/cleanup-bin"
   mkdir -p "$bin"
@@ -832,7 +870,7 @@ run_cleanup() {
   PATH="$bin:$PATH" bash "$TEST_CLEANUP" < /dev/null 2>&1 || true
 }
 run_cleanup_exit() {
-  local gh_mock="$1" curl_mock="$2" inventory="$3"
+  local gh_mock="$1" curl_mock="$2"
   rm -f "$TMPDIR_T/cleanup-secrets.log" "$TMPDIR_T/cleanup-rulesets.log"
   local bin="$TMPDIR_T/cleanup-bin"
   mkdir -p "$bin"
@@ -846,11 +884,9 @@ cleanup_ruleset_count() { [[ -f "$TMPDIR_T/cleanup-rulesets.log" ]] && wc -l < "
 # ── cleanup: missing inventory → exits non-zero ───────────────────────────────
 
 MOCK_GH_CLEAN="$TMPDIR_T/cleanup-gh-clean"
-write_cleanup_mock_gh "$MOCK_GH_CLEAN"
+write_cleanup_mock_gh "$MOCK_GH_CLEAN" "no-inventory"
 
-NOINV_EXIT=$(cd "$TMPDIR_T" && \
-  PATH="$TMPDIR_T/cleanup-bin:$PATH" \
-  bash "$TEST_CLEANUP" < /dev/null > /dev/null 2>&1; echo $?)
+NOINV_EXIT=$(run_cleanup_exit "$MOCK_GH_CLEAN" "$CLEANUP_CURL_GONE")
 
 [[ "$NOINV_EXIT" != "0" ]] \
   && ok  "cleanup no-inventory: exits non-zero" \
@@ -858,13 +894,11 @@ NOINV_EXIT=$(cd "$TMPDIR_T" && \
 
 # ── cleanup: app confirmed gone → deletes secrets and rulesets ────────────────
 
-(cd "$TMPDIR_T" && cp "$CLEANUP_INVENTORY" onboarded-repos.txt)
-
 MOCK_GH_FULL="$TMPDIR_T/cleanup-gh-full"
-write_cleanup_mock_gh "$MOCK_GH_FULL"
+write_cleanup_mock_gh "$MOCK_GH_FULL" "has-inventory"
 
-FULL_OUTPUT=$(cd "$TMPDIR_T" && run_cleanup "$MOCK_GH_FULL" "$CLEANUP_CURL_GONE" "$CLEANUP_INVENTORY")
-FULL_EXIT=$(cd "$TMPDIR_T" && run_cleanup_exit "$MOCK_GH_FULL" "$CLEANUP_CURL_GONE" "$CLEANUP_INVENTORY")
+FULL_OUTPUT=$(run_cleanup "$MOCK_GH_FULL" "$CLEANUP_CURL_GONE")
+FULL_EXIT=$(run_cleanup_exit "$MOCK_GH_FULL" "$CLEANUP_CURL_GONE")
 
 [[ "$FULL_EXIT" == "0" ]] \
   && ok  "cleanup full: exits 0" \
@@ -895,7 +929,7 @@ fi
 EOF
 chmod +x "$CLEANUP_CURL_EXISTS"
 
-EXISTS_OUTPUT=$(cd "$TMPDIR_T" && run_cleanup "$MOCK_GH_FULL" "$CLEANUP_CURL_EXISTS" "$CLEANUP_INVENTORY")
+EXISTS_OUTPUT=$(run_cleanup "$MOCK_GH_FULL" "$CLEANUP_CURL_EXISTS")
 
 printf '%s' "$EXISTS_OUTPUT" | grep -qi "still exists" \
   && ok  "cleanup app-exists: warns app still exists" \

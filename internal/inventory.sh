@@ -86,32 +86,121 @@ fi
 echo ""
 echo "All installed repos have required branch protection rulesets."
 
-# ── Update onboarded-repos.txt inventory ──────────────────────────────────────
+# ── Update inventory branch ───────────────────────────────────────────────────
 # Only runs inside GitHub Actions (GITHUB_TOKEN is available).
+# Pushes onboarded-repos.txt to a dedicated agent branch via the GitHub API
+# so that the push is signed and doesn't require pushing to main.
 # First line is a comment with the app ID — if it changes (app recreated),
 # the file is reset so the inventory reflects only the current app.
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then
-  INVENTORY="onboarded-repos.txt"
+  OWNER_LOGIN=$(curl -sf \
+    -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/installation/repositories" \
+    | jq -r '.repositories[0].owner.login')
+  FORK_REPO="${OWNER_LOGIN}/agent-github-access"
+  INV_BRANCH="x-ai/${OWNER_LOGIN}/inventory---internal-do-not-delete"
   HEADER_LINE="# app-id:${GH_APP_ID}"
 
-  # Reset if app ID changed or file doesn't exist
-  if [[ ! -f "$INVENTORY" ]] || [[ "$(head -1 "$INVENTORY")" != "$HEADER_LINE" ]]; then
-    printf '%s\n' "$HEADER_LINE" > "$INVENTORY"
+  # Fetch current inventory from branch if it exists
+  CURRENT_INV=$(curl -sf \
+    -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    "https://api.github.com/repos/${FORK_REPO}/contents/onboarded-repos.txt?ref=${INV_BRANCH}" \
+    | jq -r '.content' | base64 -d 2>/dev/null || true)
+
+  # Reset if app ID changed or branch doesn't exist yet
+  if [[ -z "$CURRENT_INV" ]] || [[ "$(printf '%s' "$CURRENT_INV" | head -1)" != "$HEADER_LINE" ]]; then
+    NEW_INV="${HEADER_LINE}"$'\n'
+  else
+    NEW_INV="$CURRENT_INV"
   fi
 
   # Merge current repos into inventory (cumulative, no removals)
   while IFS= read -r repo; do
-    if ! grep -qxF "$repo" "$INVENTORY"; then
-      echo "$repo" >> "$INVENTORY"
+    if ! printf '%s' "$NEW_INV" | grep -qxF "$repo"; then
+      NEW_INV="${NEW_INV}${repo}"$'\n'
     fi
   done <<< "$REPOS"
 
-  # Commit if anything changed
-  git config user.name  "github-actions[bot]"
-  git config user.email "github-actions[bot]@users.noreply.github.com"
-  git add "$INVENTORY"
-  if ! git diff --cached --quiet; then
-    git commit -m "chore: update onboarded-repos inventory"
-    git push
+  # Only update if content changed
+  if [[ "$NEW_INV" != "$CURRENT_INV" ]]; then
+    # Upload blob
+    BLOB_CONTENT=$(printf '%s' "$NEW_INV" | base64 | tr -d '\n')
+    BLOB_SHA=$(curl -sf -X POST \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      -H "Content-Type: application/json" \
+      -d "{\"content\":\"${BLOB_CONTENT}\",\"encoding\":\"base64\"}" \
+      "https://api.github.com/repos/${FORK_REPO}/git/blobs" \
+      | jq -r '.sha')
+
+    # Get base tree from main
+    MAIN_SHA=$(curl -sf \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${FORK_REPO}/git/ref/heads/main" \
+      | jq -r '.object.sha')
+    BASE_TREE=$(curl -sf \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${FORK_REPO}/git/commits/${MAIN_SHA}" \
+      | jq -r '.tree.sha')
+
+    # Create tree and commit
+    NEW_TREE=$(curl -sf -X POST \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      -H "Content-Type: application/json" \
+      -d "{\"base_tree\":\"${BASE_TREE}\",\"tree\":[{\"path\":\"onboarded-repos.txt\",\"mode\":\"100644\",\"type\":\"blob\",\"sha\":\"${BLOB_SHA}\"}]}" \
+      "https://api.github.com/repos/${FORK_REPO}/git/trees" \
+      | jq -r '.sha')
+
+    NEW_COMMIT=$(curl -sf -X POST \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      -H "Content-Type: application/json" \
+      -d "{\"message\":\"chore: update onboarded-repos inventory\",\"tree\":\"${NEW_TREE}\",\"parents\":[\"${MAIN_SHA}\"]}" \
+      "https://api.github.com/repos/${FORK_REPO}/git/commits" \
+      | jq -r '.sha')
+
+    # Create or force-update the inventory branch
+    BRANCH_EXISTS=$(curl -sf \
+      -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+      -H "Accept: application/vnd.github+json" \
+      -H "X-GitHub-Api-Version: 2022-11-28" \
+      "https://api.github.com/repos/${FORK_REPO}/git/ref/heads/$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')" \
+      | jq -r '.ref // empty' || true)
+
+    ENCODED_BRANCH=$(printf '%s' "$INV_BRANCH" | python3 -c 'import sys,urllib.parse; print(urllib.parse.quote(sys.stdin.read().strip(), safe=""))')
+
+    if [[ -n "$BRANCH_EXISTS" ]]; then
+      curl -sf -X PATCH \
+        -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -H "Content-Type: application/json" \
+        -d "{\"sha\":\"${NEW_COMMIT}\",\"force\":true}" \
+        "https://api.github.com/repos/${FORK_REPO}/git/refs/heads/${ENCODED_BRANCH}" > /dev/null
+    else
+      curl -sf -X POST \
+        -H "Authorization: Bearer ${INSTALL_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        -H "X-GitHub-Api-Version: 2022-11-28" \
+        -H "Content-Type: application/json" \
+        -d "{\"ref\":\"refs/heads/${INV_BRANCH}\",\"sha\":\"${NEW_COMMIT}\"}" \
+        "https://api.github.com/repos/${FORK_REPO}/git/refs" > /dev/null
+    fi
+
+    echo "Inventory updated on branch ${INV_BRANCH}."
+  else
+    echo "Inventory unchanged."
   fi
 fi

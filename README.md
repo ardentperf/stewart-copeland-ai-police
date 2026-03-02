@@ -29,7 +29,7 @@ GitHub UI or cred-setup-preinstall.sh"])
 
     subgraph fork["agent-github-access fork — GitHub (your account)"]
         SEC["🔒 Secrets: GH_APP_ID, GH_APP_PEM"]
-        INV["📄 onboarded-repos.txt"]
+        INV["📄 inventory---internal-do-not-delete branch"]
         AU(["Inventory workflow
 scheduled daily + on each onboard"])
         AU --> AUC{"All installed repos
@@ -196,7 +196,7 @@ New token requests are blocked immediately — the agent can no longer refresh i
 ./uninstall.sh
 ```
 
-The script reads the app ID from `onboarded-repos.txt` (committed to the fork by the inventory workflow) and will prompt you to delete the app if it detects it still exists before proceeding.
+The script fetches the inventory from the `x-ai/<owner>/inventory---internal-do-not-delete` branch (maintained by the inventory workflow) and will prompt you to delete the app if it detects it still exists before proceeding.
 
 To reinstall from scratch after a full cleanup, re-run `install.sh` and `onboard-repo.sh` as in the original setup.
 
