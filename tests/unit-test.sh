@@ -826,9 +826,11 @@ printf '%s' "$TREE_PAYLOAD4" | grep -q "onboarded-repos.txt" \
   || fail "inventory init: tree contains onboarded-repos.txt"
 
 # ── Run 5: update — tree uses inventory branch's own tree as base_tree ────────
+# Seed inventory with only repo1 so repo2 is new and triggers an update.
+INV_CONTENT_PARTIAL="# app-id:${TEST_APP_ID}"$'\n'"${TEST_OWNER}/repo1"$'\n'
 rm -f "$INV_BLOB_LOG" "$INV_TREE_LOG"
 INV_CURL5="$TMPDIR_T/inv-curl-run5"
-write_inv_curl "$INV_CURL5" "$INV_CONTENT1" "branch-exists"
+write_inv_curl "$INV_CURL5" "$INV_CONTENT_PARTIAL" "branch-exists"
 cp "$INV_CURL5" "$TMPDIR_T/inventory-bin/curl"
 
 GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
