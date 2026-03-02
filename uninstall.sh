@@ -3,7 +3,7 @@
 # been deleted. Run this after deleting the app in the GitHub UI.
 #
 # What it does:
-#   1. Reads the app slug and ID from onboarded-repos.txt
+#   1. Fetches the inventory from the x-ai/<owner>/inventory---internal-do-not-delete branch
 #   2. Verifies the GitHub App no longer exists (polls until confirmed)
 #   3. Deletes GH_APP_ID and GH_APP_PEM secrets from the agent-github-access fork
 #   4. Deletes the two agent-gh-access-* rulesets from every repo in the inventory
@@ -12,35 +12,28 @@
 #   (Administration read/write + Secrets read/write on agent-github-access fork)
 set -euo pipefail
 
-INVENTORY="onboarded-repos.txt"
 OWNER_LOGIN=$(gh api user --jq '.login')
 FORK_REPO="${OWNER_LOGIN}/agent-github-access"
+INV_BRANCH="x-ai/${OWNER_LOGIN}/inventory---internal-do-not-delete"
 
-# ── Fetch latest inventory from fork ─────────────────────────────────────────
-echo "Fetching latest inventory from ${FORK_REPO}…"
-REMOTE_INV=$(gh api "/repos/${FORK_REPO}/contents/${INVENTORY}" \
+# ── Fetch latest inventory from inventory branch ──────────────────────────────
+echo "Fetching latest inventory from ${FORK_REPO} (branch: ${INV_BRANCH})…"
+INVENTORY_CONTENT=$(gh api \
+  "/repos/${FORK_REPO}/contents/onboarded-repos.txt?ref=$(python3 -c "import urllib.parse; print(urllib.parse.quote('${INV_BRANCH}', safe=''))")" \
   --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
-if [[ -n "$REMOTE_INV" ]]; then
-  printf '%s' "$REMOTE_INV" > "$INVENTORY"
-  echo "  ✓ Inventory updated from fork."
-elif [[ ! -f "$INVENTORY" ]]; then
-  echo "Error: ${INVENTORY} not found locally or in fork." >&2
+
+if [[ -z "$INVENTORY_CONTENT" ]]; then
+  echo "Error: inventory not found on branch ${INV_BRANCH}." >&2
   echo "  Ensure the inventory workflow has run at least once." >&2
   exit 1
-else
-  echo "  – Could not fetch from fork; using local copy."
 fi
+echo "  ✓ Inventory fetched."
 echo ""
 
 # ── Read app ID and derive slug ───────────────────────────────────────────────
-if [[ ! -f "$INVENTORY" ]]; then
-  echo "Error: ${INVENTORY} not found." >&2
-  exit 1
-fi
-
-HEADER=$(head -1 "$INVENTORY")
+HEADER=$(printf '%s' "$INVENTORY_CONTENT" | head -1)
 if [[ "$HEADER" != "# app-id:"* ]]; then
-  echo "Error: ${INVENTORY} has unexpected format (first line: ${HEADER})" >&2
+  echo "Error: inventory has unexpected format (first line: ${HEADER})" >&2
   exit 1
 fi
 
@@ -87,7 +80,7 @@ done
 echo ""
 
 # ── Delete rulesets from every inventoried repo ───────────────────────────────
-REPOS=$(tail -n +2 "$INVENTORY")
+REPOS=$(printf '%s' "$INVENTORY_CONTENT" | tail -n +2)
 if [[ -z "$REPOS" ]]; then
   echo "No repos in inventory — nothing to clean up."
 else
