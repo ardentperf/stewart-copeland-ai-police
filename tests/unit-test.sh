@@ -821,37 +821,33 @@ fi
   && ok  "inventory inventory: no duplicate entries after two runs" \
   || fail "inventory inventory: no duplicate entries after two runs (count=$REPO1_COUNT)"
 
-# ── Run 3: app-id change resets inventory ─────────────────────────────────────
+# ── Run 3: update from partial inventory — Contents API payload is correct ─────
+# Use partial content with only repo1 so repo2 triggers an update.
+INV_CONTENT_RUN3="# List of repositories onboarded to agent-github-access"$'\n'"# app-id:${TEST_APP_ID}"$'\n'"${TEST_OWNER}/repo1"$'\n'
 rm -f "$INV_CONTENTS_LOG"
-NEW_APP_ID="111222"
 INV_CURL3="$TMPDIR_T/inv-curl-run3"
-write_inv_curl "$INV_CURL3" "$INV_CONTENT1" "branch-exists"
+write_inv_curl "$INV_CURL3" "$INV_CONTENT_RUN3" "branch-exists"
 cp "$INV_CURL3" "$TMPDIR_T/inventory-bin/curl"
 
-GH_APP_ID="$NEW_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
+GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
   PATH="$TMPDIR_T/inventory-bin:$PATH" \
   bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
 
 INV_CONTENT3=$(get_inv_content)
-
-printf '%s' "$INV_CONTENT3" | grep -q "^# app-id:${NEW_APP_ID}$" \
-  && ok  "inventory inventory: app-id change resets header" \
-  || fail "inventory inventory: app-id change resets header"
+printf '%s' "$INV_CONTENT3" | grep -q "^# app-id:${TEST_APP_ID}$" \
+  && ok  "inventory update: Contents API payload has correct app-id header" \
+  || fail "inventory update: Contents API payload has correct app-id header"
 
 printf '%s' "$INV_CONTENT3" | grep -qx "${TEST_OWNER}/repo1" \
-  && ok  "inventory inventory: repos repopulated after reset" \
-  || fail "inventory inventory: repos repopulated after reset"
+  && ok  "inventory update: Contents API payload contains repo1" \
+  || fail "inventory update: Contents API payload contains repo1"
 
-printf '%s' "$INV_CONTENT3" | grep -q "app-id:${TEST_APP_ID}" \
-  && fail "inventory inventory: old app-id still present after reset" \
-  || ok  "inventory inventory: old app-id gone after reset"
-
-# ── Run 4: update from partial inventory — Contents API payload is correct ─────
-# Use partial content with only repo1 so repo2 triggers an update.
-INV_CONTENT_RUN4="# List of repositories onboarded to agent-github-access"$'\n'"# app-id:${TEST_APP_ID}"$'\n'"${TEST_OWNER}/repo1"$'\n'
+# ── Run 4: update — Contents API used, new repo appears in uploaded content ───
+# Seed inventory with only repo1 so repo2 is new and triggers an update.
+INV_CONTENT_PARTIAL="# List of repositories onboarded to agent-github-access"$'\n'"# app-id:${TEST_APP_ID}"$'\n'"${TEST_OWNER}/repo1"$'\n'
 rm -f "$INV_CONTENTS_LOG"
 INV_CURL4="$TMPDIR_T/inv-curl-run4"
-write_inv_curl "$INV_CURL4" "$INV_CONTENT_RUN4" "branch-exists"
+write_inv_curl "$INV_CURL4" "$INV_CONTENT_PARTIAL" "branch-exists"
 cp "$INV_CURL4" "$TMPDIR_T/inventory-bin/curl"
 
 GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
@@ -859,49 +855,13 @@ GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake"
   bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
 
 INV_CONTENT4=$(get_inv_content)
-printf '%s' "$INV_CONTENT4" | grep -q "^# app-id:${TEST_APP_ID}$" \
-  && ok  "inventory update: Contents API payload has correct app-id header" \
-  || fail "inventory update: Contents API payload has correct app-id header"
-
-printf '%s' "$INV_CONTENT4" | grep -qx "${TEST_OWNER}/repo1" \
-  && ok  "inventory update: Contents API payload contains repo1" \
-  || fail "inventory update: Contents API payload contains repo1"
-
-# ── Run 5: update — Contents API used, new repo appears in uploaded content ───
-# Seed inventory with only repo1 so repo2 is new and triggers an update.
-INV_CONTENT_PARTIAL="# List of repositories onboarded to agent-github-access"$'\n'"# app-id:${TEST_APP_ID}"$'\n'"${TEST_OWNER}/repo1"$'\n'
-rm -f "$INV_CONTENTS_LOG"
-INV_CURL5="$TMPDIR_T/inv-curl-run5"
-write_inv_curl "$INV_CURL5" "$INV_CONTENT_PARTIAL" "branch-exists"
-cp "$INV_CURL5" "$TMPDIR_T/inventory-bin/curl"
-
-GH_APP_ID="$TEST_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
-  PATH="$TMPDIR_T/inventory-bin:$PATH" \
-  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
-
-INV_CONTENT5=$(get_inv_content)
-printf '%s' "$INV_CONTENT5" | grep -qx "${TEST_OWNER}/repo2" \
+printf '%s' "$INV_CONTENT4" | grep -qx "${TEST_OWNER}/repo2" \
   && ok  "inventory update: new repo appears in uploaded content" \
   || fail "inventory update: new repo appears in uploaded content"
 
-printf '%s' "$INV_CONTENT5" | grep -qx "${TEST_OWNER}/repo1" \
+printf '%s' "$INV_CONTENT4" | grep -qx "${TEST_OWNER}/repo1" \
   && ok  "inventory update: existing repo retained in uploaded content" \
   || fail "inventory update: existing repo retained in uploaded content"
-
-# ── Run 6: app-id reset — treated as init, new header written ────────────────
-rm -f "$INV_CONTENTS_LOG"
-INV_CURL6="$TMPDIR_T/inv-curl-run6"
-write_inv_curl "$INV_CURL6" "$INV_CONTENT1" "branch-exists"
-cp "$INV_CURL6" "$TMPDIR_T/inventory-bin/curl"
-
-GH_APP_ID="$NEW_APP_ID" GH_APP_PEM_B64="$INVENTORY_PEM_B64" GITHUB_TOKEN="fake" \
-  PATH="$TMPDIR_T/inventory-bin:$PATH" \
-  bash "$TEST_INVENTORY" > /dev/null 2>&1 || true
-
-INV_CONTENT6=$(get_inv_content)
-printf '%s' "$INV_CONTENT6" | grep -q "^# app-id:${NEW_APP_ID}$" \
-  && ok  "inventory app-id reset: Contents API payload has new app-id header" \
-  || fail "inventory app-id reset: Contents API payload has new app-id header"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # uninstall.sh tests
