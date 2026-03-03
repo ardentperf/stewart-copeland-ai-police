@@ -110,9 +110,6 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
     | jq -r '.repositories[0].owner.login')
   FORK_REPO="${OWNER_LOGIN}/agent-github-access"
   INV_BRANCH="x-ai/${OWNER_LOGIN}/__inventory__do-not-delete"
-  DESCRIPTION_LINE="# List of repositories onboarded to agent-github-access"
-  HEADER_LINE="# app-id:${GH_APP_ID}"
-
   # Fetch current inventory — branch must exist (initialized by install.sh)
   echo "Fetching current inventory..."
   INV_FETCH_RESPONSE=$(curl -sS \
@@ -132,17 +129,7 @@ if [[ -n "${GITHUB_TOKEN:-}" ]]; then
 
   # Normalize: ensure CURRENT_INV ends with a newline (base64 -d strips it)
   [[ -n "$CURRENT_INV" && "${CURRENT_INV: -1}" != $'\n' ]] && CURRENT_INV="${CURRENT_INV}"$'\n'
-
-  # Preserve installation-id header line across updates
-  INSTALL_ID_LINE=$(printf '%s' "$CURRENT_INV" | grep '^# installation-id:' || true)
-
-  # Reset if app ID changed; otherwise accumulate
-  if [[ "$(printf '%s' "$CURRENT_INV" | sed -n '2p')" != "$HEADER_LINE" ]]; then
-    NEW_INV="${DESCRIPTION_LINE}"$'\n'"${HEADER_LINE}"$'\n'
-    [[ -n "$INSTALL_ID_LINE" ]] && NEW_INV="${NEW_INV}${INSTALL_ID_LINE}"$'\n'
-  else
-    NEW_INV="$CURRENT_INV"
-  fi
+  NEW_INV="$CURRENT_INV"
 
   # Merge current repos into inventory (cumulative, no removals)
   while IFS= read -r repo; do
