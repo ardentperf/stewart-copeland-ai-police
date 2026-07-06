@@ -9,3 +9,4 @@ ardentperf/pgnodemx
 ardentperf/postgres-extensions-containers
 ardentperf/postgres-keycloak-oauth-validator
 ardentperf/.github
+ardentperf/cloudnative-pg
