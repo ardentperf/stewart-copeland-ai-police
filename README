@@ -11,3 +11,4 @@ ardentperf/postgres-keycloak-oauth-validator
 ardentperf/.github
 ardentperf/cloudnative-pg
 ardentperf/barman-cloud
+ardentperf/plugin-barman-cloud
