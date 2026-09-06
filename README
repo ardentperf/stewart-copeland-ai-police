@@ -16,3 +16,4 @@ ardentperf/pgsentinel
 ardentperf/glibc-unicode-sorting
 ardentperf/pgbouncer
 ardentperf/artifacts
+ardentperf/vault-replica-credentials
