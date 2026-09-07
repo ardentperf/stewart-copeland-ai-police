@@ -1,0 +1,12 @@
+model = "gpt-5.6-luna"
+model_reasoning_effort = "xhigh"
+service_tier = "default"
+notify = ["bash", "-c", "curl -s -d 'Ready' ntfy.sh/ardentperf2026n", "_"]
+approval_policy = "never"
+approvals_reviewer = "user"
+sandbox_mode = "danger-full-access"
+
+[tui]
+status_line = ["model-with-reasoning", "current-dir", "run-state", "permissions", "approval-mode", "context-used", "five-hour-limit", "weekly-limit", "context-window-size", "used-tokens", "total-input-tokens", "total-output-tokens"]
+status_line_use_colors = true
+session_picker_view = "dense"

@@ -1,0 +1,25 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "model": "sonnet",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "curl -s -d 'Ready' ntfy.sh/ardentperf2026n"
+          }
+        ]
+      }
+    ]
+  },
+  "alwaysThinkingEnabled": false,
+  "effortLevel": "high",
+  "tui": "fullscreen",
+  "skipDangerousModePermissionPrompt": true,
+  "remoteControlAtStartup": false,
+  "agentPushNotifEnabled": true
+}
